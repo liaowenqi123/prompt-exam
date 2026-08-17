@@ -7,9 +7,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // 开发环境下，把 /api 转发给本地后端（server 在 6666 端口）
+      // 开发环境下，把 /api 转发给本地后端（server 在 31337 端口）
       '/api': {
-        target: 'http://localhost:6666',
+        target: 'http://localhost:31337',
         changeOrigin: true,
       },
     },

@@ -15,8 +15,8 @@ const fs = require('fs');
 
 const app = express();
 // 监听所有接口（IPv4 + IPv6，不指定 host）：本机 localhost 和局域网其它设备都能访问；
-// 端口默认 6666（阴间端口，避免撞车），可用环境变量 PORT 覆盖
-const PORT = process.env.PORT || 6666;
+// 端口默认 31337（黑客圈"精英"端口，小众且不在 Chrome 危险端口黑名单，避免撞车），可用环境变量 PORT 覆盖
+const PORT = process.env.PORT || 31337;
 
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
