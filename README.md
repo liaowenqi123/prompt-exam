@@ -33,7 +33,7 @@
 
 - **前端**：React 18 + Vite（`web/`）
 - **后端**：Node.js + Express 轻量代理（`server/`），把请求转发到任意 OpenAI 兼容的 `/chat/completions` 接口，并托管前端构建产物
-- **阅卷模型**：只有一个（纯主观判卷、不执行）。**写死、用户不可修改**，默认本机 LM Studio 的 `qwen3.5-9b` 且关闭思考。想换模型改 `web/src/config.js` 里的 `JUDGE_CONFIG` 常量即可
+- **阅卷模型**：只有一个（纯主观判卷、不执行）。**写死、用户不可修改**，默认本机 LM Studio 的 `qwen/qwen3.5-9b` 且关闭思考。想换模型改 `web/src/config.js` 里的 `JUDGE_CONFIG` 常量即可
 
 > 为什么需要一个小后端？因为绝大多数大模型 API 不允许浏览器跨域直连。代理保持极简：不做鉴权、不落盘；前端把固定的模型参数随请求转发，后端只转发、不存储。
 
@@ -44,13 +44,13 @@ npm install          # 安装根、server、web 三个工作区的依赖
 npm run dev          # 同时启动后端(31337) 和前端(5173)
 ```
 
-浏览器打开 http://localhost:5173 就能考。**模型不可由用户修改**，默认连本机 LM Studio 的 `qwen3.5-9b`。
+浏览器打开 http://localhost:5173 就能考。**模型不可由用户修改**，默认连本机 LM Studio 的 `qwen/qwen3.5-9b`。
 
 ### 阅卷模型（默认已固定）
 
 - API 地址：`http://localhost:30001/v1`（本机 LM Studio）
 - API Key：`lm-studio`（LM Studio 不校验）
-- 模型：`qwen3.5-9b`（本地 9B）
+- 模型：`qwen/qwen3.5-9b`（本地 9B）
 - 「关闭思考」默认开启：qwen3.5 是思考型模型，不关掉会先在内心 OS 上耗光时间；关掉后打分、点评都是秒出
 
 > 改模型/改地址：编辑 `web/src/config.js` 里的 `JUDGE_CONFIG`（部署时也可以由后端代理统一改写，前端不动）。
@@ -69,7 +69,7 @@ npm start            # 后端同时托管前端，监听全部接口（IPv4+IPv6
 不指定监听地址意味着本机和局域网内其它设备都能通过 `http://<本机IP>:31337` 访问，且 `localhost` 的 IPv4/IPv6 解析都正常。
 
 > 端口说明：默认端口选了 **31337**。注意别用 6665~6669 这类端口——它们在 Chrome 的"危险端口黑名单"里，浏览器会直接报 `ERR_UNSAFE_PORT` 拒绝访问。
-> 用 Tailscale 透传时：你本地电脑起的服务直接对公网服务器透传，阅卷模型就是你电脑上的模型（默认 `qwen3.5-9b`），谁用都花的是你本地算力。
+> 用 Tailscale 透传时：你本地电脑起的服务直接对公网服务器透传，阅卷模型就是你电脑上的模型（默认 `qwen/qwen3.5-9b`），谁用都花的是你本地算力。
 
 **方式二：前端单独部署到静态托管（Vercel / Netlify / 对象存储等）**
 
@@ -77,7 +77,7 @@ npm start            # 后端同时托管前端，监听全部接口（IPv4+IPv6
 
 ### 模型配置（用户不可改）
 
-- 阅卷模型写死在 `web/src/config.js` 的 `JUDGE_CONFIG`（默认本机 LM Studio `qwen3.5-9b` + 关闭思考），**前端没有任何模型配置入口**。
+- 阅卷模型写死在 `web/src/config.js` 的 `JUDGE_CONFIG`（默认本机 LM Studio `qwen/qwen3.5-9b` + 关闭思考），**前端没有任何模型配置入口**。
 - 后端代理仍保留透传能力（接收 `baseURL / apiKey / model / disableThinking`），部署时如果不想改前端，可以直接在后端把请求统一改写到你的模型服务，前端代码不用动。
 - 后端只转发、不存储、不落盘任何 Key。
 
@@ -99,6 +99,7 @@ prompt-exam/
 
 ## 常见问题
 
-- **模型连不上 / 打分没反应**：确认本机 LM Studio 已启动并加载了 `qwen3.5-9b`（地址 30001）。
+- **模型连不上 / 打分没反应**：确认本机 LM Studio 已启动并加载了 `qwen/qwen3.5-9b`（地址 30001）。
 - **本地小模型偶发吐不出合法 JSON**：后端和前端都会自动重试纠正；仍失败会展示原始输出便于排查。
 - **想换阅卷模型**：编辑 `web/src/config.js` 里的 `JUDGE_CONFIG`（改 `model`/`baseURL` 等），重新 `npm run build` 即可。
+
