@@ -1,4 +1,4 @@
-export default function Intro({ configured, onStart, onOpenConfig }) {
+export default function Intro({ onStart }) {
   return (
     <div className="intro">
       <div className="intro-hero">
@@ -27,14 +27,6 @@ export default function Intro({ configured, onStart, onOpenConfig }) {
       <button className="btn btn-primary btn-big" onClick={onStart}>
         🚀 开始考试
       </button>
-
-      {!configured && (
-        <p className="intro-hint">
-          还没配阅卷模型，点
-          <button className="link" onClick={onOpenConfig}>⚙️ 模型配置</button>
-          填好（默认 DeepSeek；本地测试点「本地测试（LM Studio）」预设，用最省钱的 0.8B 小模型）
-        </p>
-      )}
     </div>
   );
 }
