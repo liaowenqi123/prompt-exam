@@ -2,34 +2,15 @@ import { useState } from 'react';
 import { PRESETS, saveConfig } from '../config.js';
 
 const FIELDS = [
-  {
-    key: 'exec',
-    title: '执行模型（负责按你的提示词完成场景任务）',
-    fields: [
-      { name: 'execBaseURL', label: 'API 地址 (baseURL)', placeholder: 'https://api.deepseek.com/v1', type: 'text' },
-      { name: 'execApiKey', label: 'API Key', placeholder: 'sk-...', type: 'password' },
-      { name: 'execModel', label: '模型名', placeholder: 'deepseek-chat', type: 'text' },
-    ],
-  },
-  {
-    key: 'eval',
-    title: '评测模型（负责按评分标准给你的提示词打分）',
-    fields: [
-      { name: 'evalBaseURL', label: 'API 地址 (baseURL)', placeholder: 'https://api.deepseek.com/v1', type: 'text' },
-      { name: 'evalApiKey', label: 'API Key', placeholder: 'sk-...', type: 'password' },
-      { name: 'evalModel', label: '模型名', placeholder: 'deepseek-chat', type: 'text' },
-    ],
-  },
+  { name: 'baseURL', label: 'API 地址 (baseURL)', placeholder: 'https://api.deepseek.com/v1', type: 'text' },
+  { name: 'apiKey', label: 'API Key', placeholder: 'sk-...', type: 'password' },
+  { name: 'model', label: '模型名', placeholder: 'deepseek-chat', type: 'text' },
 ];
 
 export default function ConfigModal({ config, onSave, onClose }) {
   const [form, setForm] = useState({ ...config });
 
   const set = (name, value) => setForm((f) => ({ ...f, [name]: value }));
-
-  const applyPreset = (preset) => {
-    setForm({ ...preset.config });
-  };
 
   const submit = () => {
     saveConfig(form);
@@ -40,14 +21,14 @@ export default function ConfigModal({ config, onSave, onClose }) {
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h2>⚙️ 模型配置</h2>
+          <h2>⚙️ 阅卷模型配置</h2>
           <button className="btn-icon" onClick={onClose} title="关闭">✕</button>
         </div>
 
         <div className="preset-row">
           <span className="preset-label">快速预设：</span>
           {PRESETS.map((p) => (
-            <button key={p.id} className="btn btn-sm" onClick={() => applyPreset(p)}>
+            <button key={p.id} className="btn btn-sm" onClick={() => setForm({ ...p.config })}>
               {p.name}
             </button>
           ))}
@@ -56,26 +37,24 @@ export default function ConfigModal({ config, onSave, onClose }) {
           <p key={p.id} className="preset-desc">{p.desc}</p>
         ))}
 
-        {FIELDS.map((group) => (
-          <fieldset key={group.key} className="fieldset">
-            <legend>{group.title}</legend>
-            {group.fields.map((f) => (
-              <label key={f.name} className="field">
-                <span className="field-label">{f.label}</span>
-                <input
-                  type={f.type}
-                  value={form[f.name] ?? ''}
-                  placeholder={f.placeholder}
-                  onChange={(e) => set(f.name, e.target.value)}
-                />
-              </label>
-            ))}
-          </fieldset>
-        ))}
+        <fieldset className="fieldset">
+          <legend>阅卷模型（负责打分 + 点评，纯主观判卷）</legend>
+          {FIELDS.map((f) => (
+            <label key={f.name} className="field">
+              <span className="field-label">{f.label}</span>
+              <input
+                type={f.type}
+                value={form[f.name] ?? ''}
+                placeholder={f.placeholder}
+                onChange={(e) => set(f.name, e.target.value)}
+              />
+            </label>
+          ))}
+        </fieldset>
 
         <p className="hint">
-          你的 API Key 只保存在浏览器本地（localStorage），不会发送到本项目服务器之外的地方。
-          本机 LM Studio 测试可不用真实 Key。
+          你的 API Key 只保存在浏览器本地（localStorage）。本机 LM Studio 测试可不用真实 Key。
+          考试只做主观判卷、不会执行你的提示词，所以本地用一个最小的模型（如 0.8B）就够，谁用都不花钱。
         </p>
 
         <div className="modal-actions">

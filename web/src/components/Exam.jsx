@@ -3,25 +3,22 @@ import { chat } from '../api.js';
 import { randomScenarios } from '../lib/scenarios.js';
 import {
   TOTAL_SCORE,
-  buildExecSystem,
   buildEvalSystem,
   buildEvalUser,
   parseEvalJson,
   gradeOf,
 } from '../lib/scoring.js';
 
-const EXAMPLE_PROMPT = `帮我给一家刚开的精品手冲咖啡店写个开业文案，发公众号用的。店名叫"慢慢咖啡"，主打 30 块一杯的手冲，下周六开业，在市中心写字楼楼下，主要是上班族来喝。文案要有一个吸引人的标题、150 字左右的正文、还有一句 Slogan。语气别太夸张，温暖一点就行。`;
+const EXAMPLE_PROMPT = `老板让我设计一个网站，但啥也没说清，我先按我的理解把需求补上，你当我的资深产品顾问帮我干：假设这是一家精品咖啡店的官网，目标用户是附近写字楼的上班族，用途是"品牌展示 + 在线点单 + 预约堂食"，移动端为主，风格温暖有格调。请基于这些假设，给我一份包含页面结构、核心功能、技术栈建议的网站方案；如果还有哪些我没说到、但你觉得关键的地方，列成清单让我拍板，别自己瞎定。`;
 
 export default function Exam({ config, onExit }) {
   const [phase, setPhase] = useState('loading'); // loading | question | running | result
   const [scenario, setScenario] = useState(null);
   const [prompt, setPrompt] = useState('');
-  const [stepLabel, setStepLabel] = useState('');
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
 
-  const execConfig = { baseURL: config.execBaseURL, apiKey: config.execApiKey, model: config.execModel };
-  const evalConfig = { baseURL: config.evalBaseURL, apiKey: config.evalApiKey, model: config.evalModel };
+  const judgeConfig = { baseURL: config.baseURL, apiKey: config.apiKey, model: config.model };
 
   const draw = () => {
     const [sc] = randomScenarios(1);
@@ -39,46 +36,6 @@ export default function Exam({ config, onExit }) {
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  const runOne = async () => {
-    // 阶段一：执行 —— 让 AI 严格按考生的提示词去完成任务
-    setStepLabel('AI 正在按你的提示词干活…');
-    let output = '';
-    for (let i = 0; i < 3; i++) {
-      output = await chat(execConfig, [
-        { role: 'system', content: buildExecSystem(scenario) },
-        { role: 'user', content: prompt },
-      ], { temperature: 0.7, maxTokens: 2048 });
-      if (output && output.trim()) break;
-      await sleep(400);
-    }
-    if (!output || !output.trim()) {
-      throw new Error('执行模型没有返回内容，请重试或换个模型。');
-    }
-
-    // 阶段二：评测 —— 阅卷官打分 + 点评
-    setStepLabel('阅卷官正在打分、写点评…');
-    let ev = null;
-    let rawEval = '';
-    for (let i = 0; i < 3; i++) {
-      const messages = [
-        { role: 'system', content: buildEvalSystem() },
-        { role: 'user', content: buildEvalUser(scenario, prompt, output) },
-      ];
-      if (i > 0) {
-        messages.push({
-          role: 'user',
-          content: '你上一次的输出不是严格合法的 JSON。请只重新输出一个完整的 JSON 对象，不要任何其他文字或代码块围栏。',
-        });
-      }
-      rawEval = await chat(evalConfig, messages, { temperature: 0.4, maxTokens: 4096 });
-      ev = parseEvalJson(rawEval);
-      if (ev) break;
-      await sleep(400);
-    }
-
-    return { scenario, output, eval: ev, rawEval };
-  };
-
   const submit = async () => {
     setError('');
     if (!prompt.trim()) {
@@ -87,8 +44,25 @@ export default function Exam({ config, onExit }) {
     }
     setPhase('running');
     try {
-      const r = await runOne();
-      setResult(r);
+      let ev = null;
+      let rawEval = '';
+      for (let i = 0; i < 3; i++) {
+        const messages = [
+          { role: 'system', content: buildEvalSystem() },
+          { role: 'user', content: buildEvalUser(scenario, prompt) },
+        ];
+        if (i > 0) {
+          messages.push({
+            role: 'user',
+            content: '你上一次的输出不是严格合法的 JSON。请只重新输出一个完整的 JSON 对象，不要任何其他文字或代码块围栏。',
+          });
+        }
+        rawEval = await chat(judgeConfig, messages, { temperature: 0.4, maxTokens: 4096 });
+        ev = parseEvalJson(rawEval);
+        if (ev) break;
+        await sleep(400);
+      }
+      setResult({ scenario, prompt, eval: ev, rawEval });
       setPhase('result');
     } catch (e) {
       setError(e.message);
@@ -107,12 +81,13 @@ export default function Exam({ config, onExit }) {
           <div className="card question-card">
             <div className="question-head">
               <span className="scenario-cat">{scenario.category}</span>
-              <span className="question-tag">今日考题</span>
+              <span className="question-tag">老板发话了</span>
             </div>
             <h3>{scenario.title}</h3>
-            <p className="question-situation">{scenario.situation}</p>
+            <p className="question-context">{scenario.context}</p>
+            <p className="question-boss">“{scenario.boss}”</p>
             <p className="question-task">
-              <strong>任务：</strong>{scenario.task}
+              💡 老板不会把需求讲清楚。你的活儿：把这句话变成一条提示词交给 AI，靠它把事办成——老板没说的地方，你来补。
             </p>
           </div>
 
@@ -127,13 +102,13 @@ export default function Exam({ config, onExit }) {
             <textarea
               className="prompt-input"
               rows={6}
-              placeholder={'像跟朋友聊天一样，写下你要交给 AI 的提示词……\n怎么舒服怎么说，把这道题交代清楚就行。'}
+              placeholder={'像平常聊天一样，写下你要交给 AI 的提示词……\n关键是：老板没说清的地方，你要想到、补上。'}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
             />
             <div className="prompt-meta">
               <span>{prompt.length} 字</span>
-              <span>想到啥写啥，不用端着</span>
+              <span>阅卷官只看你的提示词，不实际执行</span>
             </div>
           </div>
 
@@ -141,7 +116,7 @@ export default function Exam({ config, onExit }) {
 
           <div className="actions-row">
             <button className="btn btn-primary btn-lg" onClick={submit}>
-              📤 交卷，让 AI 打分
+              📤 交卷，让阅卷官打分
             </button>
             <button className="btn btn-ghost" onClick={draw}>换一道题</button>
           </div>
@@ -150,29 +125,23 @@ export default function Exam({ config, onExit }) {
 
       {phase === 'running' && (
         <div className="card run-card">
-          <div className="progress-label">⏳ {stepLabel}</div>
+          <div className="progress-label">⏳ 阅卷官正在打分、写点评…</div>
           <div className="progress-track">
             <div className="progress-fill indeterminate" />
           </div>
-          <p className="hint">AI 先真跑一遍你的提示词，阅卷官再打分点评，稍等…</p>
+          <p className="hint">纯主观判卷，不实际执行你的提示词，稍等…</p>
         </div>
       )}
 
       {phase === 'result' && result && (
-        <ResultView
-          result={result}
-          onAgain={draw}
-          onExit={onExit}
-        />
+        <ResultView result={result} onAgain={draw} onExit={onExit} />
       )}
     </div>
   );
 }
 
 function ResultView({ result, onAgain, onExit }) {
-  const { scenario, output, eval: ev, rawEval } = result;
-  const [showOutput, setShowOutput] = useState(false);
-
+  const { scenario, eval: ev, rawEval } = result;
   const grade = ev ? gradeOf(ev.total) : null;
 
   return (
@@ -231,13 +200,6 @@ function ResultView({ result, onAgain, onExit }) {
                 </div>
               ))}
             </div>
-          </div>
-
-          <div className="card">
-            <button className="btn btn-sm" onClick={() => setShowOutput((v) => !v)}>
-              {showOutput ? '收起' : '展开'}AI 实际跑出来的结果
-            </button>
-            {showOutput && <pre className="raw-output">{output}</pre>}
           </div>
         </>
       )}
