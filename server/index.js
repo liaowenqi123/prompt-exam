@@ -14,7 +14,8 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+// 监听 0.0.0.0：本机和局域网其它设备都能访问；端口默认 6666（阴间端口，避免撞车），可用环境变量 PORT 覆盖
+const PORT = process.env.PORT || 6666;
 
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
@@ -108,8 +109,9 @@ if (fs.existsSync(distDir)) {
   });
 }
 
-app.listen(PORT, () => {
-  console.log(`Prompt Exam server 已启动: http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Prompt Exam server 已启动（监听 0.0.0.0）: http://localhost:${PORT}`);
+  console.log('局域网访问: http://<本机IP>:' + PORT);
   console.log('前端开发请另开终端运行: npm run dev -w web（http://localhost:5173）');
   if (!fs.existsSync(distDir)) {
     console.log('提示: 未检测到 web/dist，如要单端口部署请先执行 npm run build。');
