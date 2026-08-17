@@ -44,6 +44,10 @@ app.post('/api/chat', async (req, res) => {
   const url = `${base}/chat/completions`;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // 客户端断开时立即中止上游请求；并给每次上游调用设 60s 硬超时，避免请求一直吊着
+  const reqController = new AbortController();
+  req.on('close', () => reqController.abort());
+
   // 本地小模型偶发返回空内容 / 上游偶发 5xx，做几次重试增强稳定性
   const MAX_ATTEMPTS = 3;
 
@@ -55,6 +59,7 @@ app.post('/api/chat', async (req, res) => {
           'Content-Type': 'application/json',
           ...(apiKey ? { Authorization: `Bearer ${String(apiKey).trim()}` } : {}),
         },
+        signal: AbortSignal.any([reqController.signal, AbortSignal.timeout(60000)]),
         body: JSON.stringify({
           model,
           messages,
@@ -117,6 +122,10 @@ app.post('/api/chat/stream', async (req, res) => {
   const base = String(baseURL).trim().replace(/\/+$/, '');
   const url = `${base}/chat/completions`;
 
+  // 客户端断开时中止上游流；上游 150s 硬超时，防止生成卡住时连接一直吊着（浏览器标签页一直转圈）
+  const reqController = new AbortController();
+  req.on('close', () => reqController.abort());
+
   try {
     const upstream = await fetch(url, {
       method: 'POST',
@@ -124,6 +133,7 @@ app.post('/api/chat/stream', async (req, res) => {
         'Content-Type': 'application/json',
         ...(apiKey ? { Authorization: `Bearer ${String(apiKey).trim()}` } : {}),
       },
+      signal: AbortSignal.any([reqController.signal, AbortSignal.timeout(150000)]),
       body: JSON.stringify({
         model,
         messages,

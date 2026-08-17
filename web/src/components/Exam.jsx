@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { chat, chatStream } from '../api.js';
 import { randomScenarios } from '../lib/scenarios.js';
 import {
@@ -37,7 +37,19 @@ export default function Exam({ config, onExit }) {
     disableThinking: Boolean(config.disableThinking),
   };
 
+  // 在途请求的 AbortController 集合：换题/离开页面时统一掐断，避免浏览器一直转圈
+  const abortRef = useRef([]);
+  const trackAbort = (ctrl) => {
+    abortRef.current.push(ctrl);
+    return ctrl;
+  };
+  const abortAll = () => {
+    abortRef.current.forEach((c) => c.abort());
+    abortRef.current = [];
+  };
+
   const draw = () => {
+    abortAll();
     const [sc] = randomScenarios(1);
     setScenario(sc);
     setPrompt('');
@@ -58,6 +70,7 @@ export default function Exam({ config, onExit }) {
 
   useEffect(() => {
     draw();
+    return abortAll;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -67,13 +80,14 @@ export default function Exam({ config, onExit }) {
     setScoreFailed(false);
     setScoreError('');
     const userMsg = { role: 'user', content: buildJudgeUser(scenario, prompt) };
+    const ctrl = trackAbort(new AbortController());
     let lastErr = '';
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const raw = await chat(judgeConfig, [
           { role: 'system', content: buildScoreSystem() },
           userMsg,
-        ], { temperature: 0.2, maxTokens: 4096, timeout: 90000 });
+        ], { temperature: 0.2, maxTokens: 4096, timeout: 90000, signal: ctrl.signal });
         const ev = parseJudgeJson(raw);
         if (ev) {
           setScore(ev);
@@ -81,6 +95,7 @@ export default function Exam({ config, onExit }) {
         }
         lastErr = '模型吐出的分数 JSON 不完整，重新试了一次也没成功。';
       } catch (e) {
+        if (ctrl.signal.aborted) return;
         lastErr = e.message || '打分请求失败';
       }
       await sleep(300);
@@ -96,6 +111,7 @@ export default function Exam({ config, onExit }) {
     setCommentError('');
     setThinking('');
     const userMsg = { role: 'user', content: buildJudgeUser(scenario, prompt) };
+    const ctrl = trackAbort(new AbortController());
     try {
       await chatStream(judgeConfig, [
         { role: 'system', content: buildCommentSystem() },
@@ -104,11 +120,13 @@ export default function Exam({ config, onExit }) {
         temperature: 0.7,
         maxTokens: 4096,
         timeout: 180000,
+        signal: ctrl.signal,
         onDelta: setComment,
         onThinking: setThinking,
       });
       setCommentDone(true);
     } catch (e) {
+      if (ctrl.signal.aborted) return;
       setCommentError(e.message || '点评失败');
     }
   };
@@ -122,6 +140,7 @@ export default function Exam({ config, onExit }) {
     }
     resetJudge();
     setPhase('judging');
+    abortAll();
     judgeScore();
     judgeComment();
   };

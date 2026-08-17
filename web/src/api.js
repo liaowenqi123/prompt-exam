@@ -1,8 +1,21 @@
-/** 调用后端 /api/chat 代理（普通 JSON），返回模型输出文本。opts.timeout 默认 90s，超时自动中断 */
+/** 把外部 signal 接到内部 controller 上（外部中止时内部一起中止） */
+function linkSignal(controller, external) {
+  if (!external) return;
+  if (external.aborted) {
+    controller.abort();
+    return;
+  }
+  const onAbort = () => controller.abort();
+  external.addEventListener('abort', onAbort, { once: true });
+  return onAbort;
+}
+
+/** 调用后端 /api/chat 代理（普通 JSON）。opts.timeout 默认 90s，opts.signal 可外部中止 */
 export async function chat(config, messages, opts = {}) {
   const controller = new AbortController();
   const timeout = opts.timeout ?? 90000;
   const timer = setTimeout(() => controller.abort(), timeout);
+  const detach = linkSignal(controller, opts.signal);
   try {
     const res = await fetch('/api/chat', {
       method: 'POST',
@@ -23,6 +36,7 @@ export async function chat(config, messages, opts = {}) {
     return data.content;
   } finally {
     clearTimeout(timer);
+    if (detach) opts.signal.removeEventListener('abort', detach);
   }
 }
 
@@ -30,12 +44,14 @@ export async function chat(config, messages, opts = {}) {
  * 调用后端 /api/chat/stream 流式代理（SSE），边收边回调。
  * onDelta(fullContent)：正式输出（点评正文）实时累积。
  * onThinking(fullThinking)：思考型模型的"内心 OS"实时累积（可选）。
+ * opts.signal 可外部中止（如换题、离开页面）。
  */
 export async function chatStream(config, messages, opts = {}) {
   const { onDelta, onThinking } = opts;
   const timeout = opts.timeout ?? 180000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
+  const detach = linkSignal(controller, opts.signal);
 
   let res;
   try {
@@ -55,11 +71,13 @@ export async function chatStream(config, messages, opts = {}) {
     });
   } catch {
     clearTimeout(timer);
+    if (detach) opts.signal.removeEventListener('abort', detach);
     throw new Error('连接流式接口失败');
   }
 
   if (!res.ok || !res.body) {
     clearTimeout(timer);
+    if (detach) opts.signal.removeEventListener('abort', detach);
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `请求失败（${res.status}）`);
   }
@@ -103,6 +121,7 @@ export async function chatStream(config, messages, opts = {}) {
     }
   } finally {
     clearTimeout(abortTimer);
+    if (detach) opts.signal.removeEventListener('abort', detach);
   }
   if (timedOut) throw new Error('流式输出超时');
   return full;
