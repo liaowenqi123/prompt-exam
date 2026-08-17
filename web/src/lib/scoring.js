@@ -34,7 +34,7 @@ export function buildScoreSystem() {
 
 打分原则：老板没说的地方，考生补得越多越好（"补齐题面"最重要）；提示词要像真人说话，自然、具体、有分寸。主观判断即可，不用考虑 AI 会不会执行。
 
-请直接输出分数，不要输出任何思考过程或分析。只输出一个 JSON 对象，不要输出 JSON 以外的任何文字：
+请直接输出分数，不要输出任何思考过程或分析。整个输出务必极简，总共不要超过 100 字。只输出一个 JSON 对象，不要输出 JSON 以外的任何文字：
 {"criteria":[{"name":"接住意图","score":0},{"name":"补齐题面","score":0},{"name":"目标清晰","score":0},{"name":"指令具体","score":0},{"name":"边界约束","score":0},{"name":"自然像人","score":0},{"name":"语气分寸","score":0},{"name":"具体落地","score":0}]}`;
 }
 
@@ -112,7 +112,79 @@ export function parseJudgeJson(raw) {
       /* 尝试下一个候选 */
     }
   }
+
+  // 4) 正则抠残：JSON 被截断/不完整时，从原文里把每个维度的 name/score 对抠出来
+  const salvaged = salvageEval(text);
+  if (salvaged) return salvaged;
+
   return null;
+}
+
+/**
+ * 正则抠残：小模型长提示词下偶尔会把 JSON 截断（缺大括号/逗号/末尾），
+ * 但只要每个维度的 "name" 和 "score" 还在，就能抠出来重建评分。
+ * 实在连名字都没了，退回按分数出现的顺序位置映射。
+ */
+function salvageEval(text) {
+  const nameRe = /"name"\s*:\s*"([^"]+)"/g;
+  const scoreRe = /"score"\s*:\s*(-?\d+(?:\.\d*)?)/g;
+
+  const names = [];
+  let m;
+  while ((m = nameRe.exec(text))) names.push({ name: m[1], idx: m.index });
+  const scores = [];
+  while ((m = scoreRe.exec(text))) scores.push({ val: parseFloat(m[1]), idx: m.index });
+
+  const clamp = (n, max) => {
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(max, n));
+  };
+
+  // 用 name/score 对重建
+  const pairs = [];
+  for (let i = 0; i < names.length; i++) {
+    const from = names[i].idx;
+    const to = i + 1 < names.length ? names[i + 1].idx : Infinity;
+    const next = scores.find((s) => s.idx > from && s.idx < to);
+    if (next) pairs.push({ name: names[i].name, score: next.val });
+  }
+  const matchedNames = new Set(pairs.map((p) => p.name));
+  const knownMatched = CRITERIA.filter((c) => matchedNames.has(c.name)).length;
+
+  let criteria;
+  if (knownMatched > 0) {
+    // 名字大多能对上：按标准维度顺序重建，没抠到的记 0
+    criteria = CRITERIA.map((def) => {
+      const found = pairs.find((p) => p.name === def.name);
+      return { name: def.name, key: def.key, score: clamp(found ? found.score : 0, def.max), max: def.max, reason: '' };
+    });
+  } else {
+    // 名字/键全被截断：先试带 "score" 键的，再退到"全文所有数字"按出现顺序位置映射
+    let nums = scores.map((s) => s.val);
+    if (nums.length === 0) {
+      const re = /-?\d+(?:\.\d*)?/g;
+      let mm;
+      while ((mm = re.exec(text))) nums.push(parseFloat(mm[0]));
+    }
+    if (nums.length === 0) return null;
+    criteria = CRITERIA.map((def, i) => {
+      const s = i < nums.length ? nums[i] : 0;
+      return { name: def.name, key: def.key, score: clamp(s, def.max), max: def.max, reason: '' };
+    });
+  }
+
+  const total = Math.max(
+    0,
+    Math.min(TOTAL_SCORE, Math.round(criteria.reduce((s, c) => s + c.score, 0) * 10) / 10)
+  );
+
+  return {
+    total,
+    criteria,
+    grade: gradeOf(total).label,
+    comment: '',
+    suggestions: [],
+  };
 }
 
 /** 归一化：保证 criteria 完整、数字合法 */
