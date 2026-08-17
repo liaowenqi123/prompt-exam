@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { chat } from '../api.js';
+import { chat, chatStream } from '../api.js';
 import { randomScenarios } from '../lib/scenarios.js';
 import {
   TOTAL_SCORE,
-  buildEvalSystem,
-  buildEvalUser,
-  parseEvalJson,
+  buildScoreSystem,
+  buildCommentSystem,
+  buildJudgeUser,
+  parseJudgeJson,
   gradeOf,
 } from '../lib/scoring.js';
 
@@ -15,16 +16,32 @@ export default function Exam({ config, onExit }) {
   const [phase, setPhase] = useState('loading'); // loading | question | running | result
   const [scenario, setScenario] = useState(null);
   const [prompt, setPrompt] = useState('');
-  const [result, setResult] = useState(null);
   const [error, setError] = useState('');
 
-  const judgeConfig = { baseURL: config.baseURL, apiKey: config.apiKey, model: config.model };
+  // 打分结果
+  const [score, setScore] = useState(null);
+  const [scoreFailed, setScoreFailed] = useState(false);
+  // 流式点评
+  const [comment, setComment] = useState('');
+  const [thinking, setThinking] = useState('');
+  const [commentError, setCommentError] = useState(null);
+
+  const judgeConfig = {
+    baseURL: config.baseURL,
+    apiKey: config.apiKey,
+    model: config.model,
+    disableThinking: Boolean(config.disableThinking),
+  };
 
   const draw = () => {
     const [sc] = randomScenarios(1);
     setScenario(sc);
     setPrompt('');
-    setResult(null);
+    setScore(null);
+    setScoreFailed(false);
+    setComment('');
+    setThinking('');
+    setCommentError(null);
     setError('');
     setPhase('question');
   };
@@ -34,8 +51,6 @@ export default function Exam({ config, onExit }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
   const submit = async () => {
     setError('');
     if (!prompt.trim()) {
@@ -43,31 +58,49 @@ export default function Exam({ config, onExit }) {
       return;
     }
     setPhase('running');
-    try {
-      let ev = null;
-      let rawEval = '';
-      for (let i = 0; i < 3; i++) {
-        const messages = [
-          { role: 'system', content: buildEvalSystem() },
-          { role: 'user', content: buildEvalUser(scenario, prompt) },
-        ];
-        if (i > 0) {
-          messages.push({
-            role: 'user',
-            content: '你上一次的输出不是严格合法的 JSON。请只重新输出一个完整的 JSON 对象，不要任何其他文字或代码块围栏。',
-          });
-        }
-        rawEval = await chat(judgeConfig, messages, { temperature: 0.4, maxTokens: 4096 });
-        ev = parseEvalJson(rawEval);
-        if (ev) break;
-        await sleep(400);
+    setScore(null);
+    setScoreFailed(false);
+    setComment('');
+    setThinking('');
+    setCommentError(null);
+
+    const userMsg = { role: 'user', content: buildJudgeUser(scenario, prompt) };
+
+    // 请求一：打分（只要分数，快）
+    const scoreTask = (async () => {
+      try {
+        const raw = await chat(judgeConfig, [
+          { role: 'system', content: buildScoreSystem() },
+          userMsg,
+        ], { temperature: 0.2, maxTokens: 4096, timeout: 90000 });
+        const ev = parseJudgeJson(raw);
+        if (ev) setScore(ev);
+        else setScoreFailed(true);
+      } catch {
+        setScoreFailed(true);
       }
-      setResult({ scenario, prompt, eval: ev, rawEval });
-      setPhase('result');
-    } catch (e) {
-      setError(e.message);
-      setPhase('question');
-    }
+    })();
+
+    // 请求二：点评（流式输出，前台实时显示；思考型模型的"内心 OS"也实时显示）
+    const commentTask = (async () => {
+      try {
+        await chatStream(judgeConfig, [
+          { role: 'system', content: buildCommentSystem() },
+          userMsg,
+        ], {
+          temperature: 0.7,
+          maxTokens: 4096,
+          timeout: 180000,
+          onDelta: setComment,
+          onThinking: setThinking,
+        });
+      } catch (e) {
+        setCommentError(e.message);
+      }
+    })();
+
+    await Promise.allSettled([scoreTask, commentTask]);
+    setPhase('result');
   };
 
   if (phase === 'loading' || !scenario) {
@@ -108,7 +141,7 @@ export default function Exam({ config, onExit }) {
             />
             <div className="prompt-meta">
               <span>{prompt.length} 字</span>
-              <span>阅卷官只看你的提示词，不实际执行</span>
+              <span>交卷后：先出分，点评随后流式弹出</span>
             </div>
           </div>
 
@@ -124,90 +157,114 @@ export default function Exam({ config, onExit }) {
       )}
 
       {phase === 'running' && (
-        <div className="card run-card">
-          <div className="progress-label">⏳ 阅卷官正在打分、写点评…</div>
-          <div className="progress-track">
-            <div className="progress-fill indeterminate" />
+        <div className="running">
+          <div className="card">
+            <div className="progress-label">
+              {score ? '📊 分数已出' : scoreFailed ? '⚠️ 打分失败了' : '⏳ 阅卷官打分中…'}
+            </div>
+            {score ? (
+              <ScoreBlock score={score} />
+            ) : (
+              <div className="progress-track">
+                <div className="progress-fill indeterminate" />
+              </div>
+            )}
           </div>
-          <p className="hint">纯主观判卷，不实际执行你的提示词，稍等…</p>
+
+          <div className="card review-card">
+            <h3>💬 阅卷官点评（实时）</h3>
+            {comment ? (
+              <p className="review-comment">{comment}<span className="caret" /></p>
+            ) : thinking ? (
+              <p className="thinking">🧠 阅卷官正在琢磨：{thinking}<span className="caret" /></p>
+            ) : (
+              <p className="hint">{commentError ? `点评出问题了：${commentError}` : '正在组织语言，马上就出来…'}</p>
+            )}
+          </div>
         </div>
       )}
 
-      {phase === 'result' && result && (
-        <ResultView result={result} onAgain={draw} onExit={onExit} />
+      {phase === 'result' && (
+        <div className="results">
+          <div className="result-hero card">
+            <div className="result-hero-left">
+              <span className="scenario-cat">{scenario.category}</span>
+              <h2>{scenario.title}</h2>
+            </div>
+            {score ? (
+              <ScoreBadge score={score} />
+            ) : (
+              <div className="score-badge">
+                <span className="score-num">—</span>
+                <span className="score-max">/ {TOTAL_SCORE}</span>
+                <span className="score-grade">评分暂未拿到</span>
+              </div>
+            )}
+          </div>
+
+          <div className="card review-card">
+            <h3>💬 阅卷官点评</h3>
+            {comment ? (
+              <p className="review-comment">{comment}</p>
+            ) : commentError ? (
+              <p className="error">点评出问题了：{commentError}</p>
+            ) : thinking ? (
+              <>
+                <p className="hint">（模型只思考没写出正文，这是它的思考过程）</p>
+                <pre className="raw-output">{thinking}</pre>
+              </>
+            ) : (
+              <p className="hint">（点评没生成）</p>
+            )}
+          </div>
+
+          {score && (
+            <div className="card">
+              <h3>📊 打分明细</h3>
+              <ScoreBlock score={score} />
+            </div>
+          )}
+          {scoreFailed && (
+            <div className="card">
+              <p className="hint">打分没拿到（模型没吐出一段能解析的分数）。可以试试重考或换个模型。</p>
+            </div>
+          )}
+
+          <div className="actions-row">
+            <button className="btn btn-primary btn-lg" onClick={draw}>🎲 再来一题</button>
+            <button className="btn btn-ghost" onClick={onExit}>回到首页</button>
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
-function ResultView({ result, onAgain, onExit }) {
-  const { scenario, eval: ev, rawEval } = result;
-  const grade = ev ? gradeOf(ev.total) : null;
-
+function ScoreBadge({ score }) {
+  const grade = gradeOf(score.total);
   return (
-    <div className="results">
-      <div className="result-hero card">
-        <div className="result-hero-left">
-          <span className="scenario-cat">{scenario.category}</span>
-          <h2>{scenario.title}</h2>
-        </div>
-        <div className="score-badge">
-          <span className="score-num">{ev ? ev.total : '—'}</span>
-          <span className="score-max">/ {TOTAL_SCORE}</span>
-          <span className="score-grade">
-            {grade ? `${grade.emoji} ${ev.grade || grade.label}` : ''}
-          </span>
-        </div>
-      </div>
+    <div className="score-badge">
+      <span className="score-num">{score.total}</span>
+      <span className="score-max">/ {TOTAL_SCORE}</span>
+      <span className="score-grade">{grade.emoji} {grade.label}</span>
+    </div>
+  );
+}
 
-      {!ev && (
-        <div className="card">
-          <p className="hint">阅卷官没吐出一段能解析的评分。下面是他的原话：</p>
-          <pre className="raw-output">{rawEval}</pre>
-        </div>
-      )}
-
-      {ev && (
-        <>
-          <div className="card review-card">
-            <h3>💬 阅卷官点评</h3>
-            <p className="review-comment">{ev.comment}</p>
-            {ev.suggestions.length > 0 && (
-              <div className="suggestions">
-                <h5>🧰 马上能改的</h5>
-                <ul>
-                  {ev.suggestions.map((s, i) => (
-                    <li key={i}>{s}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+function ScoreBlock({ score }) {
+  return (
+    <div className="criteria">
+      {score.criteria.map((c) => (
+        <div key={c.key} className="criterion">
+          <div className="criterion-top">
+            <span className="criterion-name">{c.name}</span>
+            <span className="criterion-score">{c.score} / {c.max}</span>
           </div>
-
-          <div className="card">
-            <h3>📊 打分明细</h3>
-            <div className="criteria">
-              {ev.criteria.map((c) => (
-                <div key={c.key} className="criterion">
-                  <div className="criterion-top">
-                    <span className="criterion-name">{c.name}</span>
-                    <span className="criterion-score">{c.score} / {c.max}</span>
-                  </div>
-                  <div className="bar">
-                    <div className="bar-fill" style={{ width: `${(c.score / c.max) * 100}%` }} />
-                  </div>
-                  {c.reason && <p className="criterion-reason">{c.reason}</p>}
-                </div>
-              ))}
-            </div>
+          <div className="bar">
+            <div className="bar-fill" style={{ width: `${(c.score / c.max) * 100}%` }} />
           </div>
-        </>
-      )}
-
-      <div className="actions-row">
-        <button className="btn btn-primary btn-lg" onClick={onAgain}>🎲 再来一题</button>
-        <button className="btn btn-ghost" onClick={onExit}>回到首页</button>
-      </div>
+        </div>
+      ))}
     </div>
   );
 }

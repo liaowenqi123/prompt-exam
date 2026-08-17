@@ -50,6 +50,14 @@ export default function ConfigModal({ config, onSave, onClose }) {
               />
             </label>
           ))}
+          <label className="field check-field">
+            <input
+              type="checkbox"
+              checked={Boolean(form.disableThinking)}
+              onChange={(e) => set('disableThinking', e.target.checked)}
+            />
+            <span>关闭模型思考（本地小模型会更快直接出结果；DeepSeek 等云端模型不要开）</span>
+          </label>
         </fieldset>
 
         <p className="hint">

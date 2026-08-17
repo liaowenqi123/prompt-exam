@@ -472,6 +472,39 @@ body {
   white-space: pre-wrap;
 }
 
+.thinking {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-2);
+  font-style: italic;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.caret {
+  display: inline-block;
+  width: 8px;
+  height: 18px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: blink 0.8s steps(1) infinite;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
+.running {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
 .suggestions {
   margin-top: 12px;
   padding: 12px 14px;
@@ -649,6 +682,24 @@ body {
   font: inherit;
   font-size: 13px;
   background: #fbfaff;
+}
+
+.check-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.check-field input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.check-field span {
+  font-size: 13px;
+  color: var(--text-2);
 }
 
 .field input:focus {

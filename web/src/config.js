@@ -16,6 +16,7 @@ export const PRESETS = [
       baseURL: 'https://api.deepseek.com/v1',
       apiKey: '',
       model: 'deepseek-chat',
+      disableThinking: false,
     },
   },
   {
@@ -26,6 +27,7 @@ export const PRESETS = [
       baseURL: 'http://localhost:30001/v1',
       apiKey: 'lm-studio',
       model: 'qwen3.5-0.8b',
+      disableThinking: true,
     },
   },
 ];

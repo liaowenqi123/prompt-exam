@@ -34,7 +34,7 @@ app.use(express.json({ limit: '4mb' }));
  * 返回: { content: string }
  */
 app.post('/api/chat', async (req, res) => {
-  const { baseURL, apiKey, model, messages, temperature = 0.7, maxTokens = 2048 } = req.body || {};
+  const { baseURL, apiKey, model, messages, temperature = 0.7, maxTokens = 2048, disableThinking = false } = req.body || {};
 
   if (!baseURL || !model || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: '缺少必要参数 baseURL / model / messages' });
@@ -61,6 +61,8 @@ app.post('/api/chat', async (req, res) => {
           temperature: Number(temperature) || 0.7,
           max_tokens: Number(maxTokens) || 2048,
           stream: false,
+          // 本地小模型（如 qwen3.5-0.8b）是思考型，关掉思考能直接、快速地出正文
+          ...(disableThinking ? { reasoning_effort: 'none' } : {}),
         }),
       });
 
@@ -99,6 +101,99 @@ app.post('/api/chat', async (req, res) => {
 
 // 健康检查
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+
+/**
+ * POST /api/chat/stream  流式版：把上游的 SSE 流原样转发给前端。
+ * 用途：阅卷官点评流式输出，让前端实时显示"字在往外蹦"，避免干等。
+ * 请求体同 /api/chat。前端通过 EventSource/ReadableStream 读取。
+ */
+app.post('/api/chat/stream', async (req, res) => {
+  const { baseURL, apiKey, model, messages, temperature = 0.7, maxTokens = 2048, disableThinking = false } = req.body || {};
+
+  if (!baseURL || !model || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: '缺少必要参数 baseURL / model / messages' });
+  }
+
+  const base = String(baseURL).trim().replace(/\/+$/, '');
+  const url = `${base}/chat/completions`;
+
+  try {
+    const upstream = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { Authorization: `Bearer ${String(apiKey).trim()}` } : {}),
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: Number(temperature) || 0.7,
+        max_tokens: Number(maxTokens) || 2048,
+        stream: true,
+        // 本地小模型（如 qwen3.5-0.8b）是思考型，关掉思考能直接、快速地出正文
+        ...(disableThinking ? { reasoning_effort: 'none' } : {}),
+      }),
+    });
+
+    if (!upstream.ok || !upstream.body) {
+      const data = await upstream.json().catch(() => ({}));
+      const msg = data?.error?.message || data?.error || upstream.statusText || '上游接口返回错误';
+      return res.status(upstream.status || 502).json({ error: String(msg) });
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const handleLine = (line) => {
+      const t = String(line).trim();
+      if (!t.startsWith('data:')) return;
+      const payload = t.slice(5).trim();
+      if (payload === '[DONE]') return;
+      try {
+        const json = JSON.parse(payload);
+        const delta = json?.choices?.[0]?.delta || {};
+        // 思考型模型（如 qwen3.5）会先吐 reasoning_content，再吐 content。
+        // 两者都转发，前端把思考过程显示成"内心 OS"，正式点评则实时累积。
+        if (typeof delta.content === 'string' && delta.content) {
+          res.write(`data: ${JSON.stringify({ type: 'content', delta: delta.content })}\n\n`);
+        } else if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+          res.write(`data: ${JSON.stringify({ type: 'thinking', delta: delta.reasoning_content })}\n\n`);
+        }
+      } catch {
+        /* 忽略无法解析的流块 */
+      }
+    };
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 1);
+        handleLine(line);
+      }
+    }
+    if (buffer.trim()) handleLine(buffer);
+
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } catch (err) {
+    if (!res.headersSent) {
+      return res.status(502).json({ error: `无法连接模型服务（${err.message}）` });
+    }
+    res.end();
+  }
+});
 
 // 生产环境：托管前端构建产物
 const distDir = path.join(__dirname, '..', 'web', 'dist');
